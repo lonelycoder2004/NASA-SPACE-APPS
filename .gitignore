@@ -44,4 +44,4 @@ Desktop.ini
 *.tmp
 
 # NASA data environment
-DATA/nasaenv/
+/nasaenv
