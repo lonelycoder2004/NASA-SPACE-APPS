@@ -1,0 +1,10 @@
+flask
+xarray
+dask
+numpy
+pandas
+netCDF4
+python-dotenv
+google-generativeai
+matplotlib
+uuid
