@@ -1,4 +1,3 @@
-flask
 xarray
 dask
 numpy
@@ -8,4 +7,6 @@ python-dotenv
 google-generativeai
 matplotlib
 uuid
+flask
+flask-cors
 scipy
