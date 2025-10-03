@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask,request, jsonify, send_from_directory
+from flask_cors import CORS
 from dotenv import load_dotenv
 import xarray as xr
 import numpy as np
@@ -10,7 +11,7 @@ import re
 import json
 
 load_dotenv()
-app = Flask(__name__)
+
 
 # Get absolute base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,6 +23,11 @@ GRAPH_FOLDER = os.path.join(BASE_DIR, "static", "graphs")
 # Create directories if they don't exist
 os.makedirs(GRAPH_FOLDER, exist_ok=True)
 os.makedirs(DATASETS_DIR, exist_ok=True)
+
+app = Flask(__name__)
+
+# Enable CORS for all routes
+CORS(app)
 
 app.config['GRAPH_FOLDER'] = GRAPH_FOLDER
 
@@ -286,7 +292,7 @@ Your task is to classify the weather at a given location and time into one or mo
 - Very Cold → Temperature < 5°C  
 - Very Windy → Wind Speed > 60 km/h  
 - Very Wet → Total Precipitation > 20 mm/month  
-- Very Uncomfortable → Temperature > 30°C OR Temperature > 35°C AND Wind Speed < 2 m/s  
+- Very Uncomfortable → Temperature > 30°C OR Temperature > 35°C AND Wind Speed < 2 km/h  
 - Air Quality - Clear → AOD < 0.1
 - Air Quality - Moderate → 0.1 ≤ AOD ≤ 0.3
 - Air Quality - Polluted/Hazy → AOD > 0.3
@@ -315,7 +321,7 @@ Example output:
     parsed_ai_response = {}
     try:
         if GOOGLE_API_KEY:
-            model = genai.GenerativeModel('gemini-2.5-flash')  # or 'gemini-1.5-pro'
+            model = genai.GenerativeModel('gemini-2.5-flash')  
             response = model.generate_content(ai_prompt)
             ai_response = response.text
             # Parse the AI response to extract clean JSON
@@ -349,3 +355,4 @@ def serve_graph(filename):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
