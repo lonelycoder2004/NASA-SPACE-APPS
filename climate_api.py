@@ -289,9 +289,9 @@ Your task is to classify the weather at a given location and time into one or mo
 
 ### Classification Rules (for AI reference):
 - Very Hot → Temperature > 35°C  
-- Very Cold → Temperature < 5°C  
-- Very Windy → Wind Speed > 60 km/h  
-- Very Wet → Total Precipitation > 20 mm/month  
+- Very Cold → Temperature < 0°C  
+- Very Windy → Wind Speed ≥ 40 km/h 
+- Very Wet → Total Precipitation > 200 mm/month  
 - Very Uncomfortable → Temperature > 30°C OR Temperature > 35°C AND Wind Speed < 2 km/h  
 - Air Quality - Clear → AOD < 0.1
 - Air Quality - Moderate → 0.1 ≤ AOD ≤ 0.3
