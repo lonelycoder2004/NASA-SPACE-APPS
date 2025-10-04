@@ -266,13 +266,13 @@ def get_climate():
             "snowfall": "mm/month",
             "aqi": "unitless (AOT)"
         },
-        "sources": {
-            "temperature": "https://disc.gsfc.nasa.gov/data-access",
-            "total_precipitation": "https://disc.gsfc.nasa.gov/data-access",
-            "wind_speed": "https://disc.gsfc.gsfc.nasa.gov/data-access",
-            "snowfall": "https://disc.gsfc.nasa.gov/data-access",
-            "aqi": "https://disc.gsfc.nasa.gov/data-access"
-        }
+       "sources": {
+            "temperature": "https://disc.gsfc.nasa.gov/datasets/M2IMNPASM_5.12.4/summary",
+            "total_precipitation": "https://disc.gsfc.nasa.gov/datasets/M2TMNXFLX_5.12.4/summary",
+            "wind_speed": "https://disc.gsfc.nasa.gov/datasets/M2IMNPASM_5.12.4/summary",
+            "snowfall": "https://disc.gsfc.nasa.gov/datasets/M2TMNXFLX_5.12.4/summary",
+            "aqi": "https://disc.gsfc.nasa.gov/datasets/M2TMNXAER_5.12.4/summary"
+        },
     }
     result["graphs"] = graph_urls
 
