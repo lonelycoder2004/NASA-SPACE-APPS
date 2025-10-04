@@ -124,7 +124,7 @@ def get_climate():
         ("temperature", "Temperature (°C)", lambda x, days: x - 273.15, "temperature", "T2M"),
         ("total_precipitation", "Total Precipitation (mm/month)", lambda x, days: x * days * 24 * 3600, "total_precipitation", "PRECTOT"),
         ("wind_speed", "Wind Speed (km/h)", lambda x, days: x * 3.6, "wind_speed", "wind_speed"),
-        ("snowfall", "Snowfall (mm/month)", lambda x, days: x * days * 24 * 3600, "snowfall", "PRECSNO"),
+        ("snowfall", "Snowfall (mm/month)", lambda x, days: x * days * 24 * 3600 * 10, "snowfall", "PRECSNO"),
         ("aqi", "Aerosol Optical Thickness (unitless)", lambda x, days: x, "aqi", "TOTEXTTAU"),
     ]
     
@@ -242,7 +242,8 @@ def get_climate():
     try:
         snow = snow_ds["PRECSNO"].interp(month=month, lat=lat, lon=lon, method="linear").values.item()
         snow_mm = snow * seconds_in_month
-        values["snowfall"] = float(f"{snow_mm:.7f}")
+        snow_depth_mm = snow_mm * 10
+        values["snowfall"] = float(f"{snow_depth_mm:.2f}")
     except Exception as e:
         print(f"Snowfall error: {e}")
         values["snowfall"] = None
@@ -284,18 +285,22 @@ Your task is to classify the weather at a given location and time into one or mo
 - Very Cold  
 - Very Windy  
 - Very Wet  
+- Very Snowy  
 - Very Uncomfortable  
 - Normal (if none of the above conditions are met)  
 
 ### Classification Rules (for AI reference):
 - Very Hot → Temperature > 35°C  
 - Very Cold → Temperature < 0°C  
-- Very Windy → Wind Speed ≥ 40 km/h 
+- Very Windy → Wind Speed ≥ 40 km/h  
 - Very Wet → Total Precipitation > 200 mm/month  
-- Very Uncomfortable → Temperature > 30°C OR Temperature > 35°C AND Wind Speed < 2 km/h  
-- Air Quality - Clear → AOD < 0.1
-- Air Quality - Moderate → 0.1 ≤ AOD ≤ 0.3
-- Air Quality - Polluted/Hazy → AOD > 0.3
+- Very Snowy → Snowfall > 100 mm/month  
+- **Very Uncomfortable** → Triggered when **multiple mild stress factors combine**, such as: 
+  - OR (Temperature > 30°C **and** Wind Speed < 5 km/h)  
+  - OR (Temperature > 28°C **and** AOD > 0.3)  
+  - OR (Temperature between 25-30°C **and** Precipitation > 150 mm/month)  
+  - *Reasoning:* High temperature combined with humidity, poor air quality, stagnant air, or sticky wet conditions makes the atmosphere feel heavy, sweaty, and exhausting even if it's not extreme.
+- Air Quality - Polluted/Hazy → AOD > 0.3  
 - Normal → If none of the above thresholds are met  
 
 ### Input Data (with units):
@@ -306,15 +311,22 @@ Your task is to classify the weather at a given location and time into one or mo
 - Wind Speed: {values['wind_speed']} km/h  
 
 ### Instructions:
-1. Analyze the input data and determine which categories apply. Multiple categories can be applied.  
-2. Explain **briefly but clearly** why each category applies, citing the values.  
-3. Return the output **strictly in JSON format** as follows:
+1. Analyze the input data carefully and decide which categories apply.  
+2. You may apply multiple categories if the data matches more than one condition.  
+3. When explaining, write **natural, meaningful sentences** that describe why each category applies, not just by listing numbers.  
+4. If no specific category applies, classify the weather as "Normal".  
+5. Return the output **strictly in JSON format** as follows:
 
 Example output:
 {{
     "classification": ["Very Hot", "Very Uncomfortable"],
-    "explanation": "Temperature is 36°C which is above 35°C (very hot). Relative Humidity is 82%, making it very uncomfortable."
+    "explanation": "The temperature is 36°C, which is above the 35°C threshold, indicating very hot conditions. Additionally, the calm wind speed of 1.2 km/h makes the atmosphere feel stuffy and uncomfortable."
 }}
+
+### Notes for Explanation Style:
+- Combine reasoning naturally (e.g., “strong winds of 45 km/h make the weather very windy” instead of “Wind speed = 45 km/h → very windy”).  
+- Mention both value and threshold in a sentence for clarity.  
+- Use connecting phrases like “as a result”, “which indicates”, or “therefore” to make the explanation coherent.  
 """
 
     ai_response = None
