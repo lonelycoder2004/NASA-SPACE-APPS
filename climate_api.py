@@ -12,8 +12,6 @@ import concurrent.futures
 import threading
 import time
 import uuid
-import hashlib
-from functools import lru_cache
 
 load_dotenv()
 
@@ -29,11 +27,57 @@ os.makedirs(GRAPH_FOLDER, exist_ok=True)
 os.makedirs(DATASETS_DIR, exist_ok=True)
 
 app = Flask(__name__)
-
-# Enable CORS for all routes
 CORS(app)
-
 app.config['GRAPH_FOLDER'] = GRAPH_FOLDER
+
+# Global flag to track if matplotlib is warmed up
+matplotlib_warmed = False
+matplotlib_lock = threading.Lock()
+
+def warm_up_matplotlib():
+    """Warm up matplotlib on first use - this will be slow but only once"""
+    global matplotlib_warmed
+    if matplotlib_warmed:
+        return True
+        
+    with matplotlib_lock:
+        if matplotlib_warmed:  # Double check after acquiring lock
+            return True
+            
+        try:
+            print("🔥 First-time matplotlib initialization (this will take a few seconds)...")
+            start_time = time.time()
+            
+            # Configure matplotlib
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            # Set production-friendly settings
+            plt.rcParams['font.family'] = 'DejaVu Sans'
+            plt.rcParams['axes.unicode_minus'] = False
+            plt.rcParams['svg.fonttype'] = 'path'
+            
+            # Create and close a simple plot to trigger font cache generation
+            plt.figure(figsize=(1, 1))
+            plt.plot([0, 1], [0, 1])
+            plt.title('Warming up matplotlib...')
+            warmup_file = os.path.join(GRAPH_FOLDER, 'matplotlib_warmup.png')
+            plt.savefig(warmup_file, format='png')
+            plt.close('all')
+            
+            # Clean up
+            if os.path.exists(warmup_file):
+                os.remove(warmup_file)
+                
+            matplotlib_warmed = True
+            elapsed = time.time() - start_time
+            print(f"✅ Matplotlib warmed up in {elapsed:.2f} seconds")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Matplotlib warm-up failed: {e}")
+            return False
 
 # Load datasets with absolute paths
 try:
@@ -45,17 +89,13 @@ try:
     print("✅ All datasets loaded successfully")
 except FileNotFoundError as e:
     print(f"❌ Dataset file not found: {e}")
-    print(f"📁 Looking in: {DATASETS_DIR}")
-    # Initialize as None to avoid crashes
     wind_ds = temp_ds = precip_ds = snow_ds = aqi_ds = None
 
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")  # Loaded from .env
-
-# Configure the Gemini API
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
 else:
-    print("⚠️  GOOGLE_API_KEY not found in environment variables")
+    print("⚠️  GOOGLE_API_KEY not found")
 
 def get_days_in_month(month, year):
     """Get number of days in a month, accounting for leap years"""
@@ -69,28 +109,24 @@ def get_days_in_month(month, year):
 def parse_ai_response(ai_text):
     """Parse AI response to extract JSON from markdown code blocks"""
     try:
-        # Remove markdown code blocks if present
         cleaned_text = re.sub(r'```json\s*|\s*```', '', ai_text).strip()
-        
-        # Parse JSON
         parsed_data = json.loads(cleaned_text)
         return parsed_data
     except json.JSONDecodeError as e:
-        # If JSON parsing fails, return the original text
-        print(f"JSON parsing error: {e}")
         return {"raw_response": ai_text, "error": "Failed to parse AI response"}
 
 def generate_single_graph(var_info, month, lat, lon, years):
-    """Generate a single graph - to be run in parallel"""
+    """Generate a single graph with thread safety"""
+    # Ensure matplotlib is warmed up
+    if not warm_up_matplotlib():
+        raise Exception("Matplotlib not available")
+    
     var, label, convert, folder, varname = var_info
     
-    # Import matplotlib inside function to avoid threading issues
-    import matplotlib
-    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    
     values = []
     
+    # Data processing (your existing logic)
     for yr in years:
         try:
             days = get_days_in_month(month, yr)
@@ -142,18 +178,19 @@ def generate_single_graph(var_info, month, lat, lon, years):
             print(f"Error processing {var} for year {yr}: {e}")
             values.append(np.nan)
     
-    # Create graph
-    plt.figure(figsize=(8, 4))
-    plt.plot(years, values, marker='o', color='royalblue')
-    plt.title(f"{label} for Month {month:02d} at ({lat}, {lon})")
-    plt.xlabel("Year")
-    plt.ylabel(label)
-    plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout()
-    filename = f"{var}_{month:02d}_{lat:.2f}_{lon:.2f}_{uuid.uuid4().hex}.png"
-    filepath = os.path.join(GRAPH_FOLDER, filename)
-    plt.savefig(filepath, format='png')
-    plt.close()
+    # Create graph with thread safety
+    with matplotlib_lock:
+        plt.figure(figsize=(8, 4))
+        plt.plot(years, values, marker='o', color='royalblue')
+        plt.title(f"{label} for Month {month:02d} at ({lat}, {lon})")
+        plt.xlabel("Year")
+        plt.ylabel(label)
+        plt.grid(True, linestyle='--', alpha=0.5)
+        plt.tight_layout()
+        filename = f"{var}_{month:02d}_{lat:.2f}_{lon:.2f}_{uuid.uuid4().hex}.png"
+        filepath = os.path.join(GRAPH_FOLDER, filename)
+        plt.savefig(filepath, format='png')
+        plt.close()
     
     return var, f"/static/graphs/{filename}", filepath
 
@@ -173,7 +210,6 @@ def generate_ai_classification(values):
     if not GOOGLE_API_KEY:
         return {"error": "Google API key not configured"}
     
-    # Check if we have enough data for AI classification
     if not values or all(v is None for v in values.values()):
         return {"error": "Insufficient data for AI classification"}
     
@@ -189,20 +225,6 @@ Your task is to classify the weather at a given location and time into one or mo
 - Very Uncomfortable  
 - Normal (if none of the above conditions are met)  
 
-### Classification Rules (for AI reference):
-- Very Hot → Temperature > 35°C  
-- Very Cold → Temperature < 0°C  
-- Very Windy → Wind Speed ≥ 40 km/h  
-- Very Wet → Total Precipitation > 200 mm/month  
-- Very Snowy → Snowfall > 100 mm/month  
-- **Very Uncomfortable** → Triggered when **multiple mild stress factors combine**, such as: 
-  - OR (Temperature > 30°C **and** Wind Speed < 5 km/h)  
-  - OR (Temperature > 28°C **and** AOD > 0.3)  
-  - OR (Temperature between 25-30°C **and** Precipitation > 150 mm/month)  
-  - *Reasoning:* High temperature combined with humidity, poor air quality, stagnant air, or sticky wet conditions makes the atmosphere feel heavy, sweaty, and exhausting even if it's not extreme.
-- Air Quality - Polluted/Hazy → AOD > 0.3  
-- Normal → If none of the above thresholds are met  
-
 ### Input Data (with units):
 - AQI: {values.get('aqi')} (unitless, Aerosol Optical Thickness)  
 - Snowfall: {values.get('snowfall')} mm/month  
@@ -210,23 +232,11 @@ Your task is to classify the weather at a given location and time into one or mo
 - Total Precipitation: {values.get('total_precipitation')} mm/month  
 - Wind Speed: {values.get('wind_speed')} km/h  
 
-### Instructions:
-1. Analyze the input data carefully and decide which categories apply.  
-2. You may apply multiple categories if the data matches more than one condition.  
-3. When explaining, write **natural, meaningful sentences** that describe why each category applies, not just by listing numbers.  
-4. If no specific category applies, classify the weather as "Normal".  
-5. Return the output **strictly in JSON format** as follows:
-
-Example output:
+Return the output **strictly in JSON format** as follows:
 {{
     "classification": ["Very Hot", "Very Uncomfortable"],
     "explanation": "The temperature is 36°C, which is above the 35°C threshold, indicating very hot conditions. Additionally, the calm wind speed of 1.2 km/h makes the atmosphere feel stuffy and uncomfortable."
 }}
-
-### Notes for Explanation Style:
-- Combine reasoning naturally (e.g., "strong winds of 45 km/h make the weather very windy" instead of "Wind speed = 45 km/h → very windy").  
-- Mention both value and threshold in a sentence for clarity.  
-- Use connecting phrases like "as a result", "which indicates", or "therefore" to make the explanation coherent.  
 """
 
     try:
@@ -237,17 +247,19 @@ Example output:
     except Exception as e:
         return {"error": f"AI classification failed: {str(e)}"}
 
-# Add health check endpoint (required for Render)
 @app.route('/')
 def health_check():
     return jsonify({
         "status": "healthy", 
         "message": "Climate API is running",
-        "datasets_loaded": all(ds is not None for ds in [wind_ds, temp_ds, precip_ds, snow_ds, aqi_ds])
+        "datasets_loaded": all(ds is not None for ds in [wind_ds, temp_ds, precip_ds, snow_ds, aqi_ds]),
+        "matplotlib_ready": matplotlib_warmed
     })
 
 @app.route('/climate', methods=['GET'])
 def get_climate():
+    start_time = time.time()
+    
     # Check if datasets are loaded
     if any(ds is None for ds in [wind_ds, temp_ds, precip_ds, snow_ds, aqi_ds]):
         return jsonify({"error": "Climate datasets not available"}), 503
@@ -264,7 +276,7 @@ def get_climate():
     else:
         rh = None
 
-    # Normalize longitude (Panoply data is often 0–360 instead of -180–180)
+    # Normalize longitude
     if lon < 0:
         lon = lon + 360
 
@@ -282,7 +294,7 @@ def get_climate():
     result = {}
     temp_files = []
     
-    # Define tasks for parallel execution
+    # Define tasks
     variable_info = [
         ("temperature", "Temperature (°C)", lambda x, days: x - 273.15, "temperature", "T2M"),
         ("total_precipitation", "Total Precipitation (mm/month)", lambda x, days: x * days * 24 * 3600, "total_precipitation", "PRECTOT"),
@@ -291,7 +303,6 @@ def get_climate():
         ("aqi", "Aerosol Optical Thickness (unitless)", lambda x, days: x, "aqi", "TOTEXTTAU"),
     ]
     
-    # Data extraction tasks
     data_tasks = [
         ("wind_speed", wind_ds, lambda x, days: x * 3.6, "wind_speed"),
         ("temperature", temp_ds, lambda x, days: x - 273.15, "T2M"),
@@ -300,30 +311,30 @@ def get_climate():
         ("aqi", aqi_ds, lambda x, days: x, "TOTEXTTAU"),
     ]
 
-    # Run operations in optimized parallel stages
+    print(f"🌤️  Processing climate data for {date_str} at ({lat}, {lon})")
+    
+    # Run operations
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        # STAGE 1: Run graph generation and data extraction in parallel (independent tasks)
-        graph_futures = {
-            executor.submit(generate_single_graph, var_info, month, lat, lon, years): var_info[0]
-            for var_info in variable_info
-        }
-        
+        # STAGE 1: Run data extraction in parallel
         data_futures = {
             executor.submit(extract_single_value, task, month, lat, lon, days_in_month): task[0]
             for task in data_tasks
         }
         
-        # Collect graph results
+        # STAGE 2: Generate graphs sequentially (matplotlib is not thread-safe)
         graph_urls = {}
-        for future in concurrent.futures.as_completed(graph_futures):
-            var_name = graph_futures[future]
+        if not matplotlib_warmed:
+            print("⏳ First-time matplotlib initialization during request...")
+        
+        for var_info in variable_info:
             try:
-                var, url, filepath = future.result()
+                var, url, filepath = generate_single_graph(var_info, month, lat, lon, years)
                 graph_urls[var] = url
                 temp_files.append(filepath)
+                print(f"✅ Generated {var} graph")
             except Exception as e:
-                print(f"Graph generation error for {var_name}: {e}")
-                graph_urls[var_name] = None
+                print(f"❌ Graph generation error for {var_info[0]}: {e}")
+                graph_urls[var_info[0]] = None
         
         # Collect data results
         values = {}
@@ -333,14 +344,15 @@ def get_climate():
                 name, value = future.result()
                 values[name] = value
             except Exception as e:
-                print(f"Data extraction error for {var_name}: {e}")
+                print(f"❌ Data extraction error for {var_name}: {e}")
                 values[var_name] = None
         
-        # STAGE 2: Run AI classification ONLY after data extraction is complete
+        # STAGE 3: Run AI classification
         ai_future = executor.submit(generate_ai_classification, values)
         
         try:
-            ai_result = ai_future.result(timeout=30)  # 30 second timeout for AI
+            ai_result = ai_future.result(timeout=30)
+            print("✅ AI classification completed")
         except concurrent.futures.TimeoutError:
             ai_result = {"error": "AI classification timed out"}
         except Exception as e:
@@ -357,38 +369,54 @@ def get_climate():
             "aqi": "unitless (AOT)"
         },
         "sources": {
-            "temperature": "https://disc.gsfc.nasa.gov/data-access",
-            "total_precipitation": "https://disc.gsfc.nasa.gov/data-access",
-            "wind_speed": "https://disc.gsfc.gsfc.nasa.gov/data-access",
-            "snowfall": "https://disc.gsfc.nasa.gov/data-access",
-            "aqi": "https://disc.gsfc.nasa.gov/data-access"
+            "temperature": "https://disc.gsfc.nasa.gov/datasets/M2IMNPASM_5.12.4/summary",
+            "total_precipitation": "https://disc.gsfc.nasa.gov/datasets/M2TMNXFLX_5.12.4/summary",
+            "wind_speed": "https://disc.gsfc.nasa.gov/datasets/M2IMNPASM_5.12.4/summary",
+            "snowfall": "https://disc.gsfc.nasa.gov/datasets/M2TMNXFLX_5.12.4/summary",
+            "aqi": "https://disc.gsfc.nasa.gov/datasets/M2TMNXAER_5.12.4/summary"
         }
     }
     result["graphs"] = graph_urls
     result["ai_classification"] = ai_result
     
+    # Add performance info
+    processing_time = time.time() - start_time
+    result["performance"] = {
+        "processing_time_seconds": round(processing_time, 2),
+        "matplotlib_prewarmed": matplotlib_warmed
+    }
+    
+    print(f"✅ Request completed in {processing_time:.2f}s")
+    
     response = jsonify(result)
     
-    # Schedule cleanup of temporary files
+    # Schedule cleanup
     def delayed_cleanup(files):
         def delete_files():
-            time.sleep(3600)  # 1 hour
+            time.sleep(3600)
             for f in files:
                 try:
                     if os.path.exists(f):
                         os.remove(f)
-                except Exception as e:
-                    print(f"Error cleaning up file {f}: {e}")
+                except Exception:
+                    pass
         threading.Thread(target=delete_files, daemon=True).start()
     
     response.call_on_close(lambda: delayed_cleanup(temp_files))
     return response
 
-# Serve static files
 @app.route('/static/graphs/<path:filename>')
 def serve_graph(filename):
     return send_from_directory(GRAPH_FOLDER, filename)
 
+# Optional: Warm up matplotlib on startup (commented out - let it warm up on first request)
+# @app.before_first_request
+# def initialize_app():
+#     print("🚀 Warming up matplotlib on startup...")
+#     warm_up_matplotlib()
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    print(f"🌍 Starting Climate API on port {port}")
+    print("📊 Matplotlib will warm up on first request (first request may be slower)")
     app.run(host="0.0.0.0", port=port, threaded=True)
