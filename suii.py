@@ -272,11 +272,34 @@ def get_climate():
     if not (-180 <= original_lon <= 180):
         return jsonify({"error": f"Invalid longitude: {original_lon}. Must be between -180 and 180"}), 400
 
-    # Convert longitude to match dataset coordinate system (0-360)
-    # NASA MERRA-2 datasets use 0-360 longitude format
-    if lon < 0:
-        lon = lon + 360
+    # Normalize longitude to match dataset coordinate system (0-355°)
+    # NASA MERRA-2 datasets use 0-360 format, but this grid only goes to 355°
+    def normalize_longitude_for_merra2(longitude):
+        """Normalize longitude for MERRA-2 dataset (0-355° grid)"""
+        # Handle the wraparound: small negative values should map to the end of the range
+        if longitude < 0:
+            # For small negative values (e.g., -2.29°), map to equivalent positive (357.71°)
+            # But since dataset max is 355°, we need to handle this specially
+            longitude_360 = longitude + 360
+            
+            # If the result is > 355, it's in the gap between 355° and 360°
+            # These should be treated as close to 0° due to Earth's spherical nature
+            if longitude_360 > 355:
+                # For values like 357°, which is 3° past 355°, 
+                # we could either use 355° or interpolate with wraparound
+                # Let's use the closest boundary approach: use 0° for values > 355°
+                longitude = 0.0  # Map to 0° (start of range)
+            else:
+                longitude = longitude_360
+        elif longitude > 355:
+            # Handle positive values > 355°
+            longitude = longitude % 360
+            if longitude > 355:
+                longitude = 0.0  # Map to 0° (start of range)
+                
+        return longitude
     
+    lon = normalize_longitude_for_merra2(lon)
     print(f"🌍 Coordinate conversion: ({original_lat}, {original_lon}) -> ({lat}, {lon})")
 
     # Date parsing
