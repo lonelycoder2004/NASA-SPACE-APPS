@@ -95,6 +95,10 @@ def get_climate():
     lat = float(request.args.get('lat'))
     lon = float(request.args.get('lon'))
     rh = request.args.get('rh')
+    
+    # Store original coordinates for response
+    original_lat, original_lon = lat, lon
+    
     if rh is not None:
         try:
             rh = float(rh)
@@ -103,9 +107,18 @@ def get_climate():
     else:
         rh = None
 
-    # Normalize longitude (Panoply data is often 0–360 instead of -180–180)
+    # Validate coordinates
+    if not (-90 <= lat <= 90):
+        return jsonify({"error": f"Invalid latitude: {lat}. Must be between -90 and 90"}), 400
+    if not (-180 <= original_lon <= 180):
+        return jsonify({"error": f"Invalid longitude: {original_lon}. Must be between -180 and 180"}), 400
+
+    # Convert longitude to match dataset coordinate system (0-360)
+    # NASA MERRA-2 datasets use 0-360 longitude format
     if lon < 0:
         lon = lon + 360
+    
+    print(f"🌍 Coordinate conversion: ({original_lat}, {original_lon}) -> ({lat}, {lon})")
 
     # Date parsing
     try:
@@ -172,10 +185,8 @@ def get_climate():
                     continue
                     
                 ds = xr.open_dataset(nc_path)
+                # Use the already converted longitude (datasets use 0-360 format)
                 lon_val = lon
-                if hasattr(ds, 'lon') and np.any(ds.lon.values > 180):
-                    if lon_val < 0:
-                        lon_val = lon_val + 360
                 try:
                     val_arr = ds[varname].interp(lat=lat, lon=lon_val, method="linear").values
                     val = float(val_arr.item() if hasattr(val_arr, 'item') else val_arr[()])
@@ -259,6 +270,11 @@ def get_climate():
     # Metadata
     result["values"] = values
     result["metadata"] = {
+        "coordinates": {
+            "requested": {"lat": original_lat, "lon": original_lon},
+            "dataset_format": {"lat": lat, "lon": lon},
+            "note": "Longitude converted from -180/180 to 0/360 format to match NASA MERRA-2 datasets"
+        },
         "units": {
             "temperature": "Celsius",
             "total_precipitation": "mm/month",
